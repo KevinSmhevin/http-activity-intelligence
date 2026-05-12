@@ -45,6 +45,12 @@ class Event(BaseModel):
     is_duplicate: bool
 
 
+class Label(BaseModel):
+    label: str
+    confidence: Confidence
+    evidence: list[str] = Field(default_factory=list)
+
+
 class IdleInterval(BaseModel):
     start: datetime
     end: datetime
