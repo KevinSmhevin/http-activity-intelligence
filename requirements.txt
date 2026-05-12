@@ -1,0 +1,9 @@
+# No required dependencies for the starter — it uses only the standard library.
+#
+# You'll likely want at least one of these. Pick whatever you prefer.
+#
+# anthropic       # for Claude
+# openai          # for GPT
+# fastapi uvicorn # if you want an HTTP API
+# pydantic        # for data validation
+# networkx        # if you decide to model as a graph
