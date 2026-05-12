@@ -35,13 +35,14 @@ Take-home assessment ~ 3 hour time budget. Build a system that turns ~5,100 HTTP
 
 ## Data quirks to remember
 
-- Timestamps mix `-07:00` and `Z` (UTC) — normalize to UTC on ingest.
-- A few duplicate events from proxy retries — dedupe on `(host, path, method, bytes_out, bytes_in)` within a 2-second window.
-- A few nulls in `path`, `status_code`, `bytes_in`.
-- Background polling (Dropbox longpoll, Slack websockets) dominates raw counts — classify foreground/background before sessionizing.
-- `client_ip` changes during the day (user moved networks) — don't anchor identity on it.
-- At least one extended idle period (~user away from laptop).
-- Event mix: dropbox 2043, slack 1653, chrome 1377, terminal 28.
+- Timestamps mix `-07:00` and `Z` (UTC) — normalize to UTC on ingest. Measured: 5,095 in `-07:00`, 6 in `Z` (the 6 UTC ones are terminal events that crossed midnight PT).
+- 5 duplicate events from proxy retries — dedupe on `(host, path, method, bytes_out, bytes_in)` within a 2-second window.
+- Nulls are sparser than they sound: `path` has **0 nulls**, `status_code` has 1, `bytes_in` has 2. `referrer` and `tab_id` are routinely null and not a quirk.
+- Background polling dominates raw counts (~88% of events). Named sources to filter: `client.dropbox.com` longpoll (2,043), `wss-primary.slack.com` keepalive (1,385), `slack.com /api/users.setPresence` (197), `mail.google.com /sync/u/0/i/s` (303 of 315 mail events). Classify foreground/background **before** sessionizing — the raw timeline's max global gap is only ~32 s because polling fills every second.
+- `client_ip` changes during the day (3 distinct IPs — user moved networks) — don't anchor identity on it.
+- Exactly one extended idle period at the 20-min cutoff: 17:58 PT → 22:30 PT, ~4 h 31 min.
+- Time span is 16.98 h (07:00 → 23:58 PT), not 24 h.
+- Event mix: dropbox 2043, slack 1653, chrome 1377, terminal 28. After foreground filtering: ~590 events (chrome dominant, then ~70 real Slack channel views and 28 terminal).
 
 ## Conventions
 
