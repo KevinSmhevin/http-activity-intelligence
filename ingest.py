@@ -2,38 +2,73 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from models import Event
+from activity_intelligence.classify import classify_foreground
+from models import Event, SessionConfig
 
 
-def load_events(path: str | Path) -> list[Event]:
-    events: list[Event] = []
+def _apex_domain(host: str) -> str:
+    parts = host.split(".")
+    if len(parts) < 2:
+        return host
+    return ".".join(parts[-2:])
+
+
+def load_events(path: str | Path, config: SessionConfig | None = None) -> list[Event]:
+    cfg = config or SessionConfig()
+
+    raws: list[dict] = []
     with Path(path).open() as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             raw = json.loads(line)
-            ts = datetime.fromisoformat(raw["timestamp"]).astimezone(timezone.utc)
-            host = raw["host"]
-            source_app = raw["source_app"]
-            engagement_key = host if source_app == "chrome" else source_app
-            events.append(
-                Event(
-                    timestamp=ts,
-                    method=raw["method"],
-                    host=host,
-                    path=raw.get("path"),
-                    status_code=raw.get("status_code"),
-                    bytes_out=raw["bytes_out"],
-                    bytes_in=raw.get("bytes_in"),
-                    source_app=source_app,
-                    tab_id=raw.get("tab_id"),
-                    referrer=raw.get("referrer"),
-                    client_ip=raw["client_ip"],
-                    apex_domain=host,
-                    engagement_key=engagement_key,
-                    is_foreground=True,
-                    is_duplicate=False,
-                )
-            )
+            raw["_ts"] = datetime.fromisoformat(raw["timestamp"]).astimezone(timezone.utc)
+            raws.append(raw)
+
+    raws.sort(key=lambda r: r["_ts"])
+
+    last_seen: dict[tuple, datetime] = {}
+    dedup_window = cfg.dedup_window_seconds
+    for raw in raws:
+        key = (
+            raw["host"],
+            raw.get("path"),
+            raw["method"],
+            raw["bytes_out"],
+            raw.get("bytes_in"),
+        )
+        last_ts = last_seen.get(key)
+        raw["_duplicate"] = (
+            last_ts is not None
+            and (raw["_ts"] - last_ts).total_seconds() <= dedup_window
+        )
+        last_seen[key] = raw["_ts"]
+
+    events: list[Event] = []
+    for raw in raws:
+        host = raw["host"]
+        source_app = raw["source_app"]
+        apex = _apex_domain(host)
+        engagement_key = host if source_app == "chrome" else source_app
+        candidate = Event(
+            timestamp=raw["_ts"],
+            method=raw["method"],
+            host=host,
+            path=raw.get("path"),
+            status_code=raw.get("status_code"),
+            bytes_out=raw["bytes_out"],
+            bytes_in=raw.get("bytes_in"),
+            source_app=source_app,
+            tab_id=raw.get("tab_id"),
+            referrer=raw.get("referrer"),
+            client_ip=raw["client_ip"],
+            apex_domain=apex,
+            engagement_key=engagement_key,
+            is_foreground=True,
+            is_duplicate=raw["_duplicate"],
+        )
+        events.append(
+            candidate.model_copy(update={"is_foreground": classify_foreground(candidate)})
+        )
     return events
