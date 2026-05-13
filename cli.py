@@ -1,9 +1,13 @@
 import argparse
 
-from api import ActivityIntelligence
-from idle import detect_idle
-from ingest import load_events
-from repository import Repository
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from api import ActivityIntelligence  # noqa: E402
+from idle import detect_idle  # noqa: E402
+from ingest import load_events  # noqa: E402
+from repository import Repository  # noqa: E402
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
@@ -64,6 +68,32 @@ def cmd_time_breakdown(args: argparse.Namespace) -> None:
         print(f"{b.total_seconds / 60:8.1f}m  ({b.session_count:>3}x)  {b.category}")
 
 
+def cmd_run(args: argparse.Namespace) -> None:
+    events = load_events(args.path)
+    ai = ActivityIntelligence(Repository(events=events))
+    sessions = ai.list_sessions()
+    intervals = detect_idle(events, ai.config)
+
+    rows: list[tuple] = [("session", s.start, s) for s in sessions]
+    rows += [("idle", iv.start, iv) for iv in intervals]
+    rows.sort(key=lambda r: r[1])
+
+    for kind, _, item in rows:
+        start = item.start.strftime("%H:%M")
+        end = item.end.strftime("%H:%M")
+        dur = item.duration_seconds / 60
+        if kind == "session":
+            label_text = item.label.text if item.label else "(none)"
+            conf = item.label.confidence.value if item.label else "?"
+            ctx = item.context or item.source_app
+            print(
+                f"{start}-{end}  {dur:>5.1f}m   [{conf}]  {label_text}   "
+                f"({ctx}, frag={item.fragmentation_score:.2f})"
+            )
+        else:
+            print(f"{start}-{end}  {dur:>5.1f}m   ──── idle ────")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="activity-intelligence")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -95,6 +125,13 @@ def main() -> None:
         help="Grouping dimension (default: label)",
     )
     p_time.set_defaults(func=cmd_time_breakdown)
+
+    p_run = sub.add_parser(
+        "run",
+        help="Run the full pipeline and print the interleaved timeline",
+    )
+    p_run.add_argument("path", help="Path to http_events.jsonl")
+    p_run.set_defaults(func=cmd_run)
 
     args = parser.parse_args()
     args.func(args)

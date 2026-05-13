@@ -2,11 +2,11 @@ from collections import defaultdict
 from typing import Literal
 
 from idle import detect_idle
-from labeler import label
+from labeler import label_session
 from models import (
     Event,
     FocusRanking,
-    LabelSource,
+    Label,
     Session,
     SessionConfig,
     TimeBucket,
@@ -26,13 +26,13 @@ class ActivityIntelligence:
     ) -> None:
         self.repository = repository
         self.config = config or SessionConfig()
+        self._label_cache: dict[str, Label] = {}
 
     def list_sessions(self) -> list[Session]:
         sessions = sessionize(self.repository.events, self.config)
         for session in sessions:
             session_events = self._events_for(session)
-            result = label(session, session_events)
-            session.label = result.model_copy(update={"source": LabelSource.FALLBACK})
+            session.label = label_session(session, session_events, self._label_cache)
         return sessions
 
     def focus_ranking(self) -> FocusRanking:

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from activity_intelligence.classify import classify_foreground
+from classify import classify_foreground
 from models import Event
 
 
