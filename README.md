@@ -1,105 +1,99 @@
-# HTTP Activity Intelligence — Take-Home Exercise
+# HTTP Activity Intelligence
 
-Welcome. Please read this whole document before you start.
+Turns a stream of HTTP events captured from a laptop into a model of how the
+user actually spent their time: distinct activity sessions, focus vs.
+fragmentation rankings, where the time went, and a short LLM-generated label
+for each session — grounded in the session's actual contents.
 
-## The problem
+Built as a take-home assessment against `data/http_events.jsonl` (5,101 events,
+~17 hours of one user's traffic). See [`INSTRUCTIONS.md`](INSTRUCTIONS.md) for
+the original prompt and [`docs/design.md`](docs/design.md) for the design
+write-up.
 
-You're given `http_events.jsonl` — a log of HTTP requests captured from a single user's laptop over roughly 24 hours. Every outbound request from their browser and apps is in there: timestamps, hostnames, paths, methods, status codes, request and response sizes, the source app that made the request, and a few other fields documented below.
+## Layout
 
-Build a system that turns this raw stream into something meaningful: a model that can answer questions about how the user spent their time online, and an LLM-powered layer that labels coherent activity sessions in human terms (e.g. "researching graph databases", "deep work on a design doc", "doomscrolling").
+```
+activity_intelligence/     # Python package
+  ingest.py                # JSONL → normalized Event records (TZ, dedupe, foreground tag)
+  classify.py              # foreground/background heuristic
+  sessionizer.py           # foreground events → Session records (gap-split per source_app)
+  idle.py                  # global foreground gaps ≥ 20 min → IdleInterval
+  labeler.py               # grounded LLM labeler with retry, fallback, and content-hash cache
+  api.py                   # ActivityIntelligence: list_sessions / focus_ranking / time_breakdown
+  repository.py            # in-memory event store
+  models.py                # Pydantic models + SessionConfig
+  cli.py                   # thin argparse CLI
+data/
+  http_events.jsonl        # input dataset
+docs/
+  design.md                # design doc (data model, sessionization, labeler, scaling)
+  data_exploration.md      # exploration notes that fed the design
+tests/
+  test_classification.py   # foreground/background heuristic
+INSTRUCTIONS.md            # original assessment prompt
+CLAUDE.md                  # repo conventions / invariants for Claude Code
+```
 
-## What we want from you
+## Setup
 
-1. **An ingestion + modeling layer.** Read the events, decide how to represent them, and persist that representation. The shape of the model is your call. We are *not* telling you to use a graph, a time-series, an event log, or anything else. Pick what fits the queries below and justify it.
+Python 3.12+. With [uv](https://docs.astral.sh/uv/):
 
-2. **An API** that answers at least:
-   - "What were the distinct activity sessions in this period?"
-   - "Which session had the most sustained focus, and which was most fragmented?"
-   - "What did the user spend the most time on?"
+```bash
+uv sync
+```
 
-   Define and document the contract. No UI required.
+Set an API key for the labeler (Anthropic by default):
 
-3. **An LLM-powered session labeler.** For each activity session your system identifies, produce a short human-readable label. The label must be grounded in the session's actual contents, not hallucinated. How you define a "session," what context you give the model, how you handle large sessions, and how you keep it cheap and reliable — those are your design decisions.
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+```
 
-4. **A design doc (1–2 pages)** covering:
-   - The requirements as you understood them, and any assumptions you made
-   - Your data model, and at least one alternative you considered and rejected
-   - Your sessionization approach and why
-   - Your LLM labeling design — prompt strategy, grounding, failure modes
-   - What you'd change to scale this from one user / one day to thousands of users continuously
-   - What you cut and why
+`.env` is loaded automatically by the labeler.
 
-## Time budget
+## Running
 
-**2–3 hours.** We mean it. If you find yourself building a fourth endpoint or polishing a schema, stop and write the design doc.
+The CLI is a module entry point on the package:
 
-## Use of AI tools
+```bash
+# Pipeline counts (foreground/background/dupes/sessions/idle)
+uv run python -m activity_intelligence stats data/http_events.jsonl
 
-You are encouraged to use Claude Code, Cursor, Copilot, or any other AI coding tool. We expect you to. As part of your submission, please include:
+# All sessions as JSON lines (one Session per line, includes label)
+uv run python -m activity_intelligence sessions data/http_events.jsonl
 
-- The prompts or transcripts you used for non-trivial parts of the work (a summary or a few representative excerpts is fine — we don't need everything)
-- Notes on places you accepted the AI's output, places you overrode it, and places you caught it being wrong
+# Most-sustained-focus and most-fragmented session
+uv run python -m activity_intelligence focus-ranking data/http_events.jsonl
 
-We care about *how* you work with these tools, not whether you use them.
+# Where the time went, grouped by label / apex_domain / source_app
+uv run python -m activity_intelligence time-breakdown data/http_events.jsonl
+uv run python -m activity_intelligence time-breakdown data/http_events.jsonl --group-by apex_domain
 
-## Before you start
+# Interleaved timeline (sessions + idle windows in chronological order)
+uv run python -m activity_intelligence run data/http_events.jsonl
+```
 
-You're welcome to ask clarifying questions. Email them to your interview contact before you start coding. We'll respond within a business day. Candidates who never ask anything are telling us something.
+Programmatic use:
 
----
+```python
+from activity_intelligence import ActivityIntelligence, Repository, load_events
 
-## Data: `http_events.jsonl`
+events = load_events("data/http_events.jsonl")
+ai = ActivityIntelligence(Repository(events=events))
 
-One JSON object per line. Approximately 5,000 events spanning ~24 hours.
+sessions = ai.list_sessions()
+ranking = ai.focus_ranking()
+buckets = ai.time_breakdown(group_by="label")
+```
 
-### Schema
+## Tests
 
-| Field | Type | Description |
-|---|---|---|
-| `timestamp` | string | ISO 8601. Mostly with timezone offset (`-07:00`); a small number are in UTC (`Z` suffix). Watch out. |
-| `method` | string | HTTP method (`GET`, `POST`, etc.) |
-| `host` | string | Destination hostname |
-| `path` | string | Request path. May be `null` in a few records. |
-| `status_code` | integer or null | HTTP response status. May be `null` in a few records. |
-| `bytes_out` | integer | Approximate request body size |
-| `bytes_in` | integer or null | Approximate response body size. May be `null` in a few records. |
-| `source_app` | string | Which app on the laptop made the request: `chrome`, `slack`, `dropbox`, `terminal`, etc. |
-| `tab_id` | string or null | For browser events, an opaque identifier for the browser tab. `null` for non-browser apps. |
-| `referrer` | string or null | The page that initiated the request, when known. `null` for many background and app-originated requests. |
-| `client_ip` | string | The laptop's local IP at the time of the request. |
+```bash
+uv run pytest
+```
 
-### Things you should know about this data
+## Design
 
-- It is messy in roughly the ways real captured logs are messy. Some of the mess is interesting signal; some is noise; figuring out which is part of the problem.
-- A small number of events have null fields. A small number of events are duplicated (proxy retry). A small number of timestamps are serialized in UTC instead of local time.
-- Background polling from chat and sync apps generates a large fraction of the raw event volume. Naive counts will be dominated by it.
-- A single page load typically fires many sub-requests to CDNs and analytics endpoints. They are not separate "activities."
-- The user's `client_ip` changes during the day — they moved between networks.
-- There is at least one extended period with no foreground activity. The user was not at the laptop.
-
-You do not have to handle every quirk perfectly. We're more interested in which quirks you notice, which you address, and which you consciously choose to ignore.
-
----
-
-## Submitting
-
-Send us a zip or a Git repo containing via email or the website:
-- Your code
-- Instructions to run it (assume we have Python 3.11+ or Node 20+ and an API key for whatever LLM provider you used)
-- Your design doc (Markdown or PDF)
-- Your AI-tool notes (transcript excerpts or a written summary)
-
-If your code doesn't quite run end-to-end, that's okay — tell us where it breaks and what you'd do next. We'd rather see honest, partial work with clear thinking than something polished but shallow.
-
-## How we'll evaluate
-
-- **Requirement gathering:** What did you ask, assume, push back on?
-- **Modeling judgment:** Did you pick a representation that actually fits the queries? Did you consider alternatives? Can you defend the choice?
-- **Abstractions:** Could a teammate add a new event source (DNS logs, app focus events) without rewriting your core?
-- **Agentic design:** Is the labeler grounded, bounded, resilient? Or is it `prompt = f"label this: {session}"`?
-- **AI workflow:** How did you actually use these tools?
-- **Scoping discipline:** What did you not build, and why?
-
-
-
-Good luck.
+See [`docs/design.md`](docs/design.md) for the full write-up: data model,
+sessionization choice, grounded LLM labeler (compressed input → tool-use JSON →
+literal-evidence check → strict retry → deterministic fallback), and what
+would change to scale beyond one user / one day.

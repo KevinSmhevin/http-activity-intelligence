@@ -1,9 +1,9 @@
 from collections import defaultdict
 from typing import Literal
 
-from idle import detect_idle
-from labeler import label_session
-from models import (
+from .idle import detect_idle
+from .labeler import label_session
+from .models import (
     Event,
     FocusRanking,
     Label,
@@ -11,8 +11,8 @@ from models import (
     SessionConfig,
     TimeBucket,
 )
-from repository import Repository
-from sessionizer import sessionize
+from .repository import Repository
+from .sessionizer import sessionize
 
 
 _FRAGMENTATION_METHOD = "distinct (apex_domain, tab_id) pairs per minute of session duration"

@@ -1,4 +1,4 @@
-from models import Event
+from .models import Event
 
 
 BACKGROUND_PATH_SUBSTRINGS: tuple[str, ...] = (

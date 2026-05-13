@@ -5,7 +5,7 @@ from anthropic import Anthropic, BadRequestError, NotFoundError
 from anthropic.types import ToolParam, ToolUseBlock
 from dotenv import load_dotenv
 
-from models import Confidence, Event, Label, LabelSource, Session
+from .models import Confidence, Event, Label, LabelSource, Session
 
 load_dotenv()
 

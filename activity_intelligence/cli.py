@@ -1,9 +1,9 @@
 import argparse
 
-from api import ActivityIntelligence
-from idle import detect_idle
-from ingest import load_events
-from repository import Repository
+from .api import ActivityIntelligence
+from .idle import detect_idle
+from .ingest import load_events
+from .repository import Repository
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:

@@ -1,7 +1,7 @@
 [project]
 name = "http-activity-intelligence"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turns captured HTTP events into labeled activity sessions with focus / fragmentation / time-on-X queries."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -14,3 +14,7 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

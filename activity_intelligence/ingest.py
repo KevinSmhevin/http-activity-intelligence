@@ -2,8 +2,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from classify import classify_foreground
-from models import Event, SessionConfig
+from .classify import classify_foreground
+from .models import Event, SessionConfig
 
 
 def _apex_domain(host: str) -> str:

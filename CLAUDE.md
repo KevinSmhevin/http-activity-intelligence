@@ -4,15 +4,17 @@ Take-home assessment ~ 3 hour time budget. Build a system that turns ~5,100 HTTP
 1. An ingestion + modeling layer
 2. An API answering three queries (distinct sessions; most-focused / most-fragmented session; what the user spent the most time on)
 3. An LLM-powered labeler that produces short, grounded labels for each session
-4. A design doc (already written — see `http_activity_intelligence_design_doc.md`)
+4. A design doc (already written — see `docs/design.md`)
 
 ## Repo layout
 
-- `README.md` — assessment prompt and data schema (do not edit)
-- `http_activity_intelligence_design_doc.md` — the source of truth for design decisions
-- `http_events.jsonl` — 5,101 events, ~1.4 MB. Schema in `README.md`
-- `starter.py` — minimal load-and-print starter; safe to replace
-- `requirements.txt` — empty by default; pick libs as needed
+- `README.md` — repo overview + run instructions (safe to update)
+- `INSTRUCTIONS.md` — assessment prompt and data schema (do not edit)
+- `docs/design.md` — the source of truth for design decisions
+- `docs/data_exploration.md` — exploration notes that fed the design
+- `data/http_events.jsonl` — 5,101 events, ~1.4 MB. Schema in `INSTRUCTIONS.md`
+- `activity_intelligence/` — Python package (ingest, classify, sessionizer, idle, labeler, api, cli)
+- `tests/` — pytest suite
 
 ## Architecture
 
@@ -54,10 +56,14 @@ Take-home assessment ~ 3 hour time budget. Build a system that turns ~5,100 HTTP
 ## Running
 
 ```bash
-python starter.py   # sanity-check the dataset loads
+uv run python -m activity_intelligence stats data/http_events.jsonl
+uv run python -m activity_intelligence sessions data/http_events.jsonl
+uv run python -m activity_intelligence focus-ranking data/http_events.jsonl
+uv run python -m activity_intelligence time-breakdown data/http_events.jsonl
+uv run python -m activity_intelligence run data/http_events.jsonl
 ```
 
-Set `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) before running the labeler.
+Set `ANTHROPIC_API_KEY` in `.env` before running the labeler (the labeler calls `load_dotenv()` on import).
 
 ## Out of scope
 

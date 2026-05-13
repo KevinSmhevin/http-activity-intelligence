@@ -2,7 +2,7 @@ from collections import Counter
 from itertools import groupby
 from operator import attrgetter
 
-from models import Event, Session, SessionConfig
+from .models import Event, Session, SessionConfig
 
 
 def sessionize(events: list[Event], config: SessionConfig) -> list[Session]:

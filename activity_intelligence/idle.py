@@ -1,6 +1,6 @@
 from operator import attrgetter
 
-from models import Event, IdleInterval, SessionConfig
+from .models import Event, IdleInterval, SessionConfig
 
 
 def detect_idle(events: list[Event], config: SessionConfig) -> list[IdleInterval]:
