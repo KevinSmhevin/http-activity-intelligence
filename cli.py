@@ -1,13 +1,9 @@
 import argparse
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from api import ActivityIntelligence  # noqa: E402
-from idle import detect_idle  # noqa: E402
-from ingest import load_events  # noqa: E402
-from repository import Repository  # noqa: E402
+from api import ActivityIntelligence
+from idle import detect_idle
+from ingest import load_events
+from repository import Repository
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
