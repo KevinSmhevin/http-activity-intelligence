@@ -1,4 +1,5 @@
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from .idle import detect_idle
@@ -16,6 +17,7 @@ from .sessionizer import sessionize
 
 
 _FRAGMENTATION_METHOD = "distinct (apex_domain, tab_id) pairs per minute of session duration"
+_LABEL_WORKERS = 8
 
 
 class ActivityIntelligence:
@@ -28,11 +30,18 @@ class ActivityIntelligence:
         self.config = config or SessionConfig()
         self._label_cache: dict[str, Label] = {}
 
-    def list_sessions(self) -> list[Session]:
+    def list_sessions(self, *, with_labels: bool = True) -> list[Session]:
         sessions = sessionize(self.repository.events, self.config)
-        for session in sessions:
-            session_events = self._events_for(session)
-            session.label = label_session(session, session_events, self._label_cache)
+        if not with_labels:
+            return sessions
+
+        def _label(session: Session) -> None:
+            session.label = label_session(
+                session, self._events_for(session), self._label_cache
+            )
+
+        with ThreadPoolExecutor(max_workers=_LABEL_WORKERS) as pool:
+            list(pool.map(_label, sessions))
         return sessions
 
     def focus_ranking(self) -> FocusRanking:

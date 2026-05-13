@@ -4,19 +4,20 @@ from .api import ActivityIntelligence
 from .idle import detect_idle
 from .ingest import load_events
 from .repository import Repository
+from .sessionizer import sessionize
 
 
 def cmd_sessions(args: argparse.Namespace) -> None:
     events = load_events(args.path)
     ai = ActivityIntelligence(Repository(events=events))
-    for session in ai.list_sessions():
+    for session in ai.list_sessions(with_labels=not args.no_labels):
         print(session.model_dump_json())
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
     events = load_events(args.path)
     ai = ActivityIntelligence(Repository(events=events))
-    sessions = ai.list_sessions()
+    sessions = sessionize(events, ai.config)
     intervals = detect_idle(events, ai.config)
 
     foreground = sum(e.is_foreground for e in events)
@@ -96,6 +97,11 @@ def main() -> None:
 
     p_sessions = sub.add_parser("sessions", help="List activity sessions as JSON lines")
     p_sessions.add_argument("path", help="Path to http_events.jsonl")
+    p_sessions.add_argument(
+        "--no-labels",
+        action="store_true",
+        help="Skip LLM labeling (fast, no API key needed; `label` will be null)",
+    )
     p_sessions.set_defaults(func=cmd_sessions)
 
     p_stats = sub.add_parser("stats", help="Print pipeline counts")
