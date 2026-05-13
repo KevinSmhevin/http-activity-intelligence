@@ -46,8 +46,9 @@ class Event(BaseModel):
 
 
 class Label(BaseModel):
-    label: str
+    text: str
     confidence: Confidence
+    source: LabelSource | None = None
     evidence: list[str] = Field(default_factory=list)
 
 
@@ -63,29 +64,28 @@ class Session(BaseModel):
     engagement_key: str
     source_app: str
     apex_domain: str | None
+    context: str | None
     start: datetime
     end: datetime
     duration_seconds: float
     event_count: int
-    fragmentation: float
+    fragmentation_score: float
     distinct_tabs: int
     distinct_hosts: int
-    top_hosts: list[tuple[str, int]]
+    dominant_hosts: list[tuple[str, int]]
     top_paths: list[tuple[str, int]]
     content_hash: str
 
-    label: str | None = None
-    label_confidence: Confidence | None = None
-    label_source: LabelSource | None = None
-    label_evidence: list[str] = Field(default_factory=list)
+    label: Label | None = None
 
 
 class FocusRanking(BaseModel):
-    most_focused: Session
+    most_sustained: Session
     most_fragmented: Session
+    method: str
 
 
-class Timebucket(BaseModel):
+class TimeBucket(BaseModel):
     category: str
     total_seconds: float
     session_count: int
