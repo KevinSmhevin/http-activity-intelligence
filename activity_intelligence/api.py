@@ -1,4 +1,5 @@
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
@@ -62,40 +63,13 @@ class ActivityIntelligence:
         group_by: Literal["label", "apex_domain", "source_app"] = "label",
     ) -> list[TimeBucket]:
         sessions = self.list_sessions()
+        key_fn = _resolve_grouping_key(group_by)
+        groups = _group_sessions_by_key(sessions, key_fn)
+        buckets = [_bucket_from_group(cat, sess) for cat, sess in groups.items()]
 
-        def key_for(session: Session) -> str:
-            if group_by == "label":
-                return session.label.text if session.label else session.source_app
-            if group_by == "apex_domain":
-                if session.source_app == "chrome" and session.context:
-                    return session.context
-                return session.source_app
-            return session.source_app
-
-        groups: dict[str, list[Session]] = defaultdict(list)
-        for session in sessions:
-            groups[key_for(session)].append(session)
-
-        buckets = [
-            TimeBucket(
-                category=category,
-                total_seconds=sum(s.duration_seconds for s in sess),
-                session_count=len(sess),
-                session_ids=[s.id for s in sess],
-            )
-            for category, sess in groups.items()
-        ]
-
-        intervals = detect_idle(self.repository.events, self.config)
-        if intervals:
-            buckets.append(
-                TimeBucket(
-                    category="idle / away",
-                    total_seconds=sum(iv.duration_seconds for iv in intervals),
-                    session_count=len(intervals),
-                    session_ids=[],
-                )
-            )
+        idle_intervals = detect_idle(self.repository.events, self.config)
+        if idle_intervals:
+            buckets.append(_idle_bucket(idle_intervals))
 
         buckets.sort(key=lambda b: -b.total_seconds)
         return buckets
@@ -109,3 +83,52 @@ class ActivityIntelligence:
             and e.is_foreground
             and not e.is_duplicate
         ]
+
+
+def _resolve_grouping_key(group_by: str) -> Callable[[Session], str]:
+    if group_by == "label":
+        return _key_by_label
+    if group_by == "apex_domain":
+        return _key_by_apex_domain
+    return _key_by_source_app
+
+
+def _key_by_label(session: Session) -> str:
+    return session.label.text if session.label else session.source_app
+
+
+def _key_by_apex_domain(session: Session) -> str:
+    if session.source_app == "chrome" and session.context:
+        return session.context
+    return session.source_app
+
+
+def _key_by_source_app(session: Session) -> str:
+    return session.source_app
+
+
+def _group_sessions_by_key(
+    sessions: list[Session], key_fn: Callable[[Session], str]
+) -> dict[str, list[Session]]:
+    groups: dict[str, list[Session]] = defaultdict(list)
+    for session in sessions:
+        groups[key_fn(session)].append(session)
+    return groups
+
+
+def _bucket_from_group(category: str, sessions: list[Session]) -> TimeBucket:
+    return TimeBucket(
+        category=category,
+        total_seconds=sum(s.duration_seconds for s in sessions),
+        session_count=len(sessions),
+        session_ids=[s.id for s in sessions],
+    )
+
+
+def _idle_bucket(intervals) -> TimeBucket:
+    return TimeBucket(
+        category="idle / away",
+        total_seconds=sum(iv.duration_seconds for iv in intervals),
+        session_count=len(intervals),
+        session_ids=[],
+    )

@@ -3,6 +3,7 @@ import argparse
 from .api import ActivityIntelligence
 from .idle import detect_idle
 from .ingest import load_events
+from .models import IdleInterval, Session
 from .repository import Repository
 from .sessionizer import sessionize
 
@@ -71,24 +72,43 @@ def cmd_run(args: argparse.Namespace) -> None:
     sessions = ai.list_sessions()
     intervals = detect_idle(events, ai.config)
 
-    rows: list[tuple] = [("session", s.start, s) for s in sessions]
-    rows += [("idle", iv.start, iv) for iv in intervals]
-    rows.sort(key=lambda r: r[1])
+    for item in _merge_timeline_items(sessions, intervals):
+        print(_format_timeline_row(item))
 
-    for kind, _, item in rows:
-        start = item.start.strftime("%H:%M")
-        end = item.end.strftime("%H:%M")
-        dur = item.duration_seconds / 60
-        if kind == "session":
-            label_text = item.label.text if item.label else "(none)"
-            conf = item.label.confidence.value if item.label else "?"
-            ctx = item.context or item.source_app
-            print(
-                f"{start}-{end}  {dur:>5.1f}m   [{conf}]  {label_text}   "
-                f"({ctx}, frag={item.fragmentation_score:.2f})"
-            )
-        else:
-            print(f"{start}-{end}  {dur:>5.1f}m   ──── idle ────")
+
+def _merge_timeline_items(
+    sessions: list[Session], intervals: list[IdleInterval]
+) -> list[Session | IdleInterval]:
+    items: list[Session | IdleInterval] = [*sessions, *intervals]
+    items.sort(key=lambda x: x.start)
+    return items
+
+
+def _format_timeline_row(item: Session | IdleInterval) -> str:
+    if isinstance(item, Session):
+        return _format_session_row(item)
+    return _format_idle_row(item)
+
+
+def _format_session_row(session: Session) -> str:
+    label_text = session.label.text if session.label else "(none)"
+    conf = session.label.confidence.value if session.label else "?"
+    ctx = session.context or session.source_app
+    return (
+        f"{_format_time_prefix(session)}   [{conf}]  {label_text}   "
+        f"({ctx}, frag={session.fragmentation_score:.2f})"
+    )
+
+
+def _format_idle_row(interval: IdleInterval) -> str:
+    return f"{_format_time_prefix(interval)}   ──── idle ────"
+
+
+def _format_time_prefix(item: Session | IdleInterval) -> str:
+    start = item.start.strftime("%H:%M")
+    end = item.end.strftime("%H:%M")
+    dur = item.duration_seconds / 60
+    return f"{start}-{end}  {dur:>5.1f}m"
 
 
 def main() -> None:

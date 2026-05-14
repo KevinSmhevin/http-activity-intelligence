@@ -78,41 +78,62 @@ def _sorted_counts(counter: Counter, n: int) -> list[tuple[str, int]]:
 
 
 def compress_session(session: Session, events: list[Event]) -> str:
-    lines: list[str] = []
+    sections = [
+        _format_session_header(session),
+        _format_apex_section(events),
+        _format_referrer_section(events),
+    ]
+    return "\n\n".join("\n".join(section) for section in sections if section)
 
+
+def _format_session_header(session: Session) -> list[str]:
     duration_min = session.duration_seconds / 60.0
     dow = _DAY_NAMES[session.start.weekday()]
+    return [
+        f"source_app: {session.source_app}",
+        f"duration_minutes: {duration_min:.1f}",
+        f"event_count: {session.event_count}",
+        f"fragmentation_score: {session.fragmentation_score:.2f}",
+        f"start: {dow} {session.start.hour:02d}:00 UTC",
+    ]
 
-    lines.append(f"source_app: {session.source_app}")
-    lines.append(f"duration_minutes: {duration_min:.1f}")
-    lines.append(f"event_count: {session.event_count}")
-    lines.append(f"fragmentation_score: {session.fragmentation_score:.2f}")
-    lines.append(f"start: {dow} {session.start.hour:02d}:00 UTC")
 
+def _format_apex_section(events: list[Event]) -> list[str]:
     apex_counts = Counter(e.apex_domain for e in events)
-    top_apex = _sorted_counts(apex_counts, 5)
-
-    lines.append("")
-    lines.append("top apex_domains:")
-    for apex, count in top_apex:
+    lines = ["top apex_domains:"]
+    for apex, count in _sorted_counts(apex_counts, 5):
         lines.append(f"  {apex} ({count})")
-        paths = Counter(
-            e.path for e in events if e.apex_domain == apex and e.path is not None
-        )
-        for path, pcount in _sorted_counts(paths, 3):
-            lines.append(f"    {_truncate(path)} ({pcount})")
+        lines.extend(_format_paths_for_apex(events, apex))
+    return lines
 
+
+def _format_paths_for_apex(events: list[Event], apex: str) -> list[str]:
+    paths = Counter(
+        e.path for e in events if e.apex_domain == apex and e.path is not None
+    )
+    return [
+        f"    {_truncate(path)} ({pcount})"
+        for path, pcount in _sorted_counts(paths, 3)
+    ]
+
+
+def _format_referrer_section(events: list[Event]) -> list[str]:
     referrers = Counter(e.referrer for e in events if e.referrer is not None)
-    if referrers:
-        lines.append("")
-        lines.append("top referrers:")
-        for ref, rcount in _sorted_counts(referrers, 3):
-            lines.append(f"  {_truncate(ref)} ({rcount})")
-
-    return "\n".join(lines)
+    if not referrers:
+        return []
+    lines = ["top referrers:"]
+    for ref, rcount in _sorted_counts(referrers, 3):
+        lines.append(f"  {_truncate(ref)} ({rcount})")
+    return lines
 
 
 def _call_llm(compressed: str, stricter: bool) -> tuple[str, str, list[str]]:
+    response = _invoke_llm_with_fallback(compressed, stricter)
+    payload = _extract_emit_label_payload(response)
+    return _validate_label_payload(payload)
+
+
+def _invoke_llm_with_fallback(compressed: str, stricter: bool):
     client = Anthropic()
     system = _BASE_SYSTEM_PROMPT + (_STRICT_ADDENDUM if stricter else "")
 
@@ -128,23 +149,21 @@ def _call_llm(compressed: str, stricter: bool) -> tuple[str, str, list[str]]:
         )
 
     try:
-        response = _create(_PRIMARY_MODEL)
+        return _create(_PRIMARY_MODEL)
     except (NotFoundError, BadRequestError):
-        response = _create(_FALLBACK_MODEL)
+        return _create(_FALLBACK_MODEL)
 
-    tool_use: ToolUseBlock | None = None
+
+def _extract_emit_label_payload(response) -> dict:
     for block in response.content:
         if isinstance(block, ToolUseBlock) and block.name == "emit_label":
-            tool_use = block
-            break
+            if not isinstance(block.input, dict):
+                raise ValueError(f"emit_label input is not a dict: {block.input!r}")
+            return block.input
+    raise ValueError("LLM response did not contain an emit_label tool_use block")
 
-    if tool_use is None:
-        raise ValueError("LLM response did not contain an emit_label tool_use block")
 
-    payload = tool_use.input
-    if not isinstance(payload, dict):
-        raise ValueError(f"emit_label input is not a dict: {payload!r}")
-
+def _validate_label_payload(payload: dict) -> tuple[str, str, list[str]]:
     label_text = payload.get("label")
     confidence = payload.get("confidence")
     evidence = payload.get("evidence")
@@ -168,23 +187,29 @@ def validate_grounding(evidence: list[str], compressed: str) -> bool:
     compressed_lower = compressed.lower()
     lines_lower = compressed_lower.splitlines()
 
-    for item in evidence:
-        item_lower = item.lower()
+    return all(
+        _evidence_item_is_grounded(item, compressed_lower, lines_lower)
+        for item in evidence
+    )
 
-        if item_lower in compressed_lower:
-            continue
 
-        if "." in item:
-            if any(
-                token.endswith(item_lower)
-                for line in lines_lower
-                for token in line.split()
-            ):
-                continue
+def _evidence_item_is_grounded(
+    item: str, compressed_lower: str, lines_lower: list[str]
+) -> bool:
+    item_lower = item.lower()
+    if item_lower in compressed_lower:
+        return True
+    if "." in item:
+        return _domain_token_appears_in_lines(item_lower, lines_lower)
+    return False
 
-        return False
 
-    return True
+def _domain_token_appears_in_lines(domain_lower: str, lines_lower: list[str]) -> bool:
+    return any(
+        token.endswith(domain_lower)
+        for line in lines_lower
+        for token in line.split()
+    )
 
 
 def label_session(

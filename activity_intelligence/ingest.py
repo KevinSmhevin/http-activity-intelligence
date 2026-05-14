@@ -13,23 +13,25 @@ def _apex_domain(host: str) -> str:
     return ".".join(parts[-2:])
 
 
-def load_events(path: str | Path, config: SessionConfig | None = None) -> list[Event]:
-    cfg = config or SessionConfig()
-
+def read_raw_events(path: str | Path) -> list[dict]:
     raws: list[dict] = []
     with Path(path).open() as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            raw = json.loads(line)
-            raw["_ts"] = datetime.fromisoformat(raw["timestamp"]).astimezone(timezone.utc)
-            raws.append(raw)
+            raws.append(json.loads(line))
+    return raws
 
-    raws.sort(key=lambda r: r["_ts"])
 
+def normalize_timestamps(raws: list[dict]) -> list[dict]:
+    for raw in raws:
+        raw["_ts"] = datetime.fromisoformat(raw["timestamp"]).astimezone(timezone.utc)
+    return sorted(raws, key=lambda r: r["_ts"])
+
+
+def mark_duplicates(raws: list[dict], window_seconds: float) -> None:
     last_seen: dict[tuple, datetime] = {}
-    dedup_window = cfg.dedup_window_seconds
     for raw in raws:
         key = (
             raw["host"],
@@ -41,34 +43,41 @@ def load_events(path: str | Path, config: SessionConfig | None = None) -> list[E
         last_ts = last_seen.get(key)
         raw["_duplicate"] = (
             last_ts is not None
-            and (raw["_ts"] - last_ts).total_seconds() <= dedup_window
+            and (raw["_ts"] - last_ts).total_seconds() <= window_seconds
         )
         last_seen[key] = raw["_ts"]
 
-    events: list[Event] = []
-    for raw in raws:
-        host = raw["host"]
-        source_app = raw["source_app"]
-        apex = _apex_domain(host)
-        engagement_key = host if source_app == "chrome" else source_app
-        candidate = Event(
-            timestamp=raw["_ts"],
-            method=raw["method"],
-            host=host,
-            path=raw.get("path"),
-            status_code=raw.get("status_code"),
-            bytes_out=raw["bytes_out"],
-            bytes_in=raw.get("bytes_in"),
-            source_app=source_app,
-            tab_id=raw.get("tab_id"),
-            referrer=raw.get("referrer"),
-            client_ip=raw["client_ip"],
-            apex_domain=apex,
-            engagement_key=engagement_key,
-            is_foreground=True,
-            is_duplicate=raw["_duplicate"],
-        )
-        events.append(
-            candidate.model_copy(update={"is_foreground": classify_foreground(candidate)})
-        )
-    return events
+
+def build_events(raws: list[dict]) -> list[Event]:
+    return [_raw_to_event(raw) for raw in raws]
+
+
+def _raw_to_event(raw: dict) -> Event:
+    host = raw["host"]
+    source_app = raw["source_app"]
+    candidate = Event(
+        timestamp=raw["_ts"],
+        method=raw["method"],
+        host=host,
+        path=raw.get("path"),
+        status_code=raw.get("status_code"),
+        bytes_out=raw["bytes_out"],
+        bytes_in=raw.get("bytes_in"),
+        source_app=source_app,
+        tab_id=raw.get("tab_id"),
+        referrer=raw.get("referrer"),
+        client_ip=raw["client_ip"],
+        apex_domain=_apex_domain(host),
+        engagement_key=host if source_app == "chrome" else source_app,
+        is_foreground=True,
+        is_duplicate=raw["_duplicate"],
+    )
+    return candidate.model_copy(update={"is_foreground": classify_foreground(candidate)})
+
+
+def load_events(path: str | Path, config: SessionConfig | None = None) -> list[Event]:
+    cfg = config or SessionConfig()
+    raws = read_raw_events(path)
+    raws = normalize_timestamps(raws)
+    mark_duplicates(raws, cfg.dedup_window_seconds)
+    return build_events(raws)
